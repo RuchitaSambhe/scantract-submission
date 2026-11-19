@@ -1,0 +1,347 @@
+/**
+ * API client with authentication and error handling
+ */
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+export class ApiError extends Error {
+  status: number;
+  fieldErrors?: Record<string, string[]>;
+  
+  constructor(
+    status: number,
+    message: string,
+    fieldErrors?: Record<string, string[]>
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.fieldErrors = fieldErrors;
+  }
+}
+
+interface FastAPIValidationError {
+  loc: (string | number)[];
+  msg: string;
+  type: string;
+}
+
+interface PipelineError {
+  message?: string;
+  failed_stage?: string;
+  error_message?: string;
+}
+
+/**
+ * Make an authenticated API request
+ */
+export async function apiRequest<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  
+  // Attach Authorization header if token exists
+  const token = localStorage.getItem('scantract_token');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> || {}),
+  };
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  
+  const response = await fetch(url, {
+    ...options,
+    headers,
+  });
+  
+  // Handle 401 Unauthorized
+  if (response.status === 401) {
+    const isAuthEndpoint = endpoint.startsWith('/api/auth/login') || 
+                          endpoint.startsWith('/api/auth/register') ||
+                          endpoint.startsWith('/api/auth/forgot-password') ||
+                          endpoint.startsWith('/api/auth/reset-password');
+    
+    if (!isAuthEndpoint) {
+      // Clear session and redirect
+      localStorage.removeItem('scantract_token');
+      
+      // Show toast if available
+      if (typeof window !== 'undefined' && 'toast' in window) {
+        (window as any).toast?.error('Session expired, please log in again');
+      }
+      
+      // Redirect to login
+      const currentPath = window.location.pathname;
+      if (currentPath !== '/login') {
+        sessionStorage.setItem('redirect_after_login', currentPath);
+        window.location.href = '/login';
+      }
+    }
+  }
+  
+  // Parse response
+  const contentType = response.headers.get('content-type');
+  const isJson = contentType?.includes('application/json');
+  
+  if (!isJson) {
+    if (!response.ok) {
+      throw new ApiError(response.status, `HTTP ${response.status}: ${response.statusText}`);
+    }
+    return (await response.text()) as T;
+  }
+  
+  const data = await response.json();
+  
+  if (!response.ok) {
+    // Handle FastAPI validation errors (422)
+    if (response.status === 422 && Array.isArray(data.detail)) {
+      const validationErrors: FastAPIValidationError[] = data.detail;
+      const fieldErrors: Record<string, string[]> = {};
+      
+      validationErrors.forEach((err) => {
+        const field = err.loc[err.loc.length - 1].toString();
+        if (!fieldErrors[field]) {
+          fieldErrors[field] = [];
+        }
+        fieldErrors[field].push(err.msg);
+      });
+      
+      throw new ApiError(422, 'Validation error', fieldErrors);
+    }
+    
+    // Handle FastAPI detail string
+    if (typeof data.detail === 'string') {
+      throw new ApiError(response.status, data.detail);
+    }
+    
+    // Handle pipeline error object
+    if (data.detail && typeof data.detail === 'object') {
+      const pipelineError = data.detail as PipelineError;
+      const message = pipelineError.message || 
+                     pipelineError.error_message || 
+                     `Error at stage: ${pipelineError.failed_stage}`;
+      throw new ApiError(response.status, message);
+    }
+    
+    // Generic error
+    throw new ApiError(response.status, data.error || 'An error occurred');
+  }
+  
+  // Handle {success, data, error} envelope
+  if (typeof data === 'object' && 'success' in data) {
+    if (!data.success) {
+      throw new ApiError(response.status, data.error || 'Request failed');
+    }
+    return data.data as T;
+  }
+  
+  // Return raw data
+  return data as T;
+}
+
+/**
+ * Upload a file via multipart/form-data
+ */
+export async function apiUpload<T>(
+  endpoint: string,
+  file: File,
+  additionalData?: Record<string, string>
+): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const token = localStorage.getItem('scantract_token');
+  
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  if (additionalData) {
+    Object.entries(additionalData).forEach(([key, value]) => {
+      formData.append(key, value);
+    });
+  }
+  
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  
+  const data = await response.json();
+  
+  if (!response.ok) {
+    if (typeof data.detail === 'string') {
+      throw new ApiError(response.status, data.detail);
+    }
+    throw new ApiError(response.status, data.error || 'Upload failed');
+  }
+  
+  if (typeof data === 'object' && 'success' in data) {
+    if (!data.success) {
+      throw new ApiError(response.status, data.error || 'Upload failed');
+    }
+    return data.data as T;
+  }
+  
+  return data as T;
+}
+
+/**
+ * List user's contracts and sample contracts.
+ * 
+ * @returns List of contracts with status and metadata
+ */
+export async function listContracts(): Promise<import('./types').ContractListItem[]> {
+  return apiRequest<import('./types').ContractListItem[]>('/api/contracts/list');
+}
+
+/**
+ * Get complete risk report for a contract.
+ * 
+ * @param contractId - Contract ID (integer)
+ * @returns Contract report with findings and risk summary
+ */
+export async function getReport(contractId: number): Promise<import('./types').Report> {
+  return apiRequest<import('./types').Report>(`/api/contracts/${contractId}/report`);
+}
+
+/**
+ * Download PDF report for a contract.
+ * 
+ * @param contractId - Contract ID (integer)
+ * @returns Blob containing PDF data
+ */
+export async function downloadReportPdf(contractId: number): Promise<Blob> {
+  const url = `${API_BASE_URL}/api/contracts/${contractId}/report/pdf`;
+  const token = localStorage.getItem('scantract_token');
+  
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  
+  const response = await fetch(url, { headers });
+  
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type');
+    if (contentType?.includes('application/json')) {
+      const data = await response.json();
+      throw new ApiError(
+        response.status,
+        data.detail || data.error || 'Failed to download PDF'
+      );
+    }
+    throw new ApiError(response.status, `HTTP ${response.status}: ${response.statusText}`);
+  }
+  
+  return response.blob();
+}
+
+/**
+ * Upload a contract file for processing.
+ * 
+ * @param file - Contract file (PDF or DOCX)
+ * @param _contractType - Contract type (reserved for future use, not currently used by endpoint)
+ * @returns Upload response with contract ID and status
+ */
+export async function uploadContract(
+  file: File,
+  _contractType: string = 'rental'
+): Promise<import('./types').UploadResponse> {
+  const url = `${API_BASE_URL}/api/contracts/upload`;
+  const token = localStorage.getItem('scantract_token');
+  
+  const formData = new FormData();
+  formData.append('file', file);
+  // Note: _contractType is reserved for future use
+  
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  // Do NOT set Content-Type - browser sets it with boundary
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  
+  const data = await response.json();
+  
+  if (!response.ok) {
+    if (typeof data.detail === 'string') {
+      throw new ApiError(response.status, data.detail);
+    }
+    throw new ApiError(response.status, data.error || 'Upload failed');
+  }
+  
+  return data as import('./types').UploadResponse;
+}
+
+/**
+ * Get pipeline status for a contract.
+ * 
+ * Note: There is no dedicated per-contract status endpoint.
+ * Use listContracts() and find the contract by ID to get its status.
+ * 
+ * @param contractId - Contract ID (integer)
+ * @returns Contract list item with current status
+ */
+export async function getPipelineStatus(
+  contractId: number
+): Promise<import('./types').ContractListItem> {
+  const contracts = await listContracts();
+  const contract = contracts.find((c) => c.contract_id === contractId);
+  
+  if (!contract) {
+    throw new ApiError(404, `Contract ${contractId} not found`);
+  }
+  
+  return contract;
+}
+
+
+/**
+ * Delete a contract.
+ * 
+ * @param contractId - Contract ID to delete
+ * @returns Success response
+ */
+export async function deleteContract(contractId: number): Promise<void> {
+  await apiRequest(`/api/contracts/${contractId}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Retry processing a failed contract.
+ * 
+ * @param contractId - Contract ID to retry
+ * @returns Success response with contract_id
+ */
+export async function retryContract(contractId: number): Promise<{ contract_id: number }> {
+  const response = await apiRequest<{ contract_id: number }>(`/api/contracts/${contractId}/retry`, {
+    method: 'POST',
+  });
+  return response;
+}
+
+/**
+ * Delete all user data (contracts and account).
+ * This invalidates the current session token.
+ * 
+ * @returns Number of contracts deleted
+ */
+export async function deleteMyData(): Promise<{ deleted_contracts: number }> {
+  const response = await apiRequest<{ deleted_contracts: number }>('/api/auth/me/data', {
+    method: 'DELETE',
+  });
+  return response;
+}

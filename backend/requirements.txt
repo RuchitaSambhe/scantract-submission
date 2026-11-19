@@ -1,0 +1,47 @@
+# ScanTract Backend Dependencies
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6  # For file uploads
+
+# Database & ORM
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0  # PostgreSQL async driver
+psycopg2-binary>=2.9.0  # Required for Alembic migrations (sync driver)
+psycopg[binary]>=3.1.0  # psycopg3 for SQLAlchemy 2.0 (binary bundle includes libpq)
+alembic>=1.12.0  # Database migrations
+pgvector>=0.2.3  # PostgreSQL vector extension support
+
+# Pydantic (data validation)
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Document Processing
+PyMuPDF>=1.23.0  # PDF processing
+python-docx>=1.0.0  # DOCX processing
+
+# LLM & RAG
+langchain>=0.1.0  # Prompt templates and LLM orchestration
+openai>=1.3.0  # OpenAI API (GPT)
+anthropic>=0.7.0  # Anthropic API (Claude)
+google-genai>=1.0.0  # Google Gemini API (new SDK, supports AQ. key format)
+tiktoken>=0.5.0  # Token counting for context budget management
+
+# Environment & Configuration
+python-dotenv>=1.0.0
+PyJWT==2.8.0  # JWT tokens for authentication
+email-validator==2.3.0  # Required by Pydantic EmailStr
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.25.0  # For FastAPI test client
+
+# PDF Generation
+weasyprint>=60.0  # HTML to PDF conversion for reports
+# Note: On Windows, weasyprint requires GTK libraries. See: https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows
+
+# Utilities
+python-jose[cryptography]>=3.3.0  # JWT tokens (if adding auth later)
+passlib[bcrypt]>=1.7.4  # Password hashing (if adding auth later)

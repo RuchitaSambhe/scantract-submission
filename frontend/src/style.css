@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #6366f1;
+    --color-primary-dark: #8b5cf6;
+    --color-accent: #22d3ee;
+    --color-background: #f7f8fc;
+    --color-surface: #ffffff;
+    --color-border: #e5e7eb;
+    --color-text-primary: #111827;
+    --color-text-secondary: #6b7280;
+    --color-severity-high: #dc2626;
+    --color-severity-high-bg: #fef2f2;
+    --color-severity-high-border: #fecaca;
+    --color-severity-medium: #d97706;
+    --color-severity-medium-bg: #fffbeb;
+    --color-severity-medium-border: #fde68a;
+    --color-severity-low: #059669;
+    --color-severity-low-bg: #f0fdf4;
+    --color-severity-low-border: #bbf7d0;
+    --color-severity-safe: #059669;
+    --color-severity-safe-bg: #f0fdf4;
+    --color-severity-safe-border: #bbf7d0;
+  }
+  
+  .dark {
+    --color-background: #0b1020;
+    --color-surface: #1a1f35;
+    --color-border: #2d3548;
+    --color-text-primary: #f9fafb;
+    --color-text-secondary: #9ca3af;
+  }
+  
+  html {
+    @apply antialiased;
+    font-feature-settings: 'kern' 1, 'liga' 1;
+  }
+  
+  body {
+    @apply font-sans text-gray-900 bg-gray-50;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold;
+  }
+  
+  *:focus-visible {
+    @apply outline-none ring-2 ring-offset-2;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-md font-medium transition-all;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+  
+  .btn-primary {
+    @apply bg-navy-900 text-white hover:bg-navy-800 focus:ring-navy-700;
+  }
+  
+  .btn-secondary {
+    @apply bg-navy-100 text-navy-900 hover:bg-navy-200 focus:ring-navy-500;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow border border-gray-200 overflow-hidden;
+  }
+  
+  .risk-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .risk-badge-low {
+    @apply bg-green-100 text-green-800 ring-1 ring-green-600/20;
+  }
+  
+  .risk-badge-medium {
+    @apply bg-amber-100 text-amber-900 ring-1 ring-amber-600/30;
+  }
+  
+  .risk-badge-high {
+    @apply bg-red-100 text-red-900 ring-1 ring-red-600/30;
+  }
+}

@@ -1,0 +1,185 @@
+"""
+API endpoints for contract risk report generation and retrieval.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from io import BytesIO
+import logging
+import re
+
+from ...reports import assemble_contract_report, generate_pdf_report
+from ...db.database import get_db
+from ...auth.dependencies import get_current_user
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/contracts", tags=["reports"])
+
+
+@router.get("/{contract_id}/report")
+async def get_contract_report(
+    contract_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+) -> dict:
+    """
+    Get complete contract report (JSON).
+    
+    Args:
+        contract_id: Contract ID (INTEGER)
+        db: Database session
+    
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "contract_id": 1,
+                "filename": "lease.pdf",
+                "all_clauses": [...],
+                "risky_clauses": [...],
+                "missing_clauses": [...],
+                "risk_summary": {...},
+                "legal_references": [...]
+            },
+            "error": null
+        }
+    """
+    try:
+        # Verify ownership or sample access
+        from sqlalchemy import select
+        from ...db.models import Contract
+        result = await db.execute(select(Contract).where(Contract.id == contract_id))
+        contract = result.scalar_one_or_none()
+        
+        # Allow if: owned by user OR is a sample contract
+        if not contract or not (contract.user_id == current_user.id or contract.is_sample):
+            raise HTTPException(status_code=404, detail="Contract not found")
+        
+        report = await assemble_contract_report(contract_id, db)
+        
+        return {
+            "success": True,
+            "data": report.model_dump(),
+            "error": None
+        }
+        
+    except ValueError as e:
+        error_msg = str(e)
+        # Check if it's an incomplete processing error
+        if "processing incomplete" in error_msg.lower():
+            # Fetch contract for error details
+            from sqlalchemy import select
+            from ...db.models import Contract
+            result = await db.execute(select(Contract).where(Contract.id == contract_id))
+            contract = result.scalar_one_or_none()
+            
+            if contract:
+                detail = {
+                    "message": error_msg,
+                    "failed_stage": contract.failed_stage,
+                    "error_message": contract.error_message
+                }
+            else:
+                detail = error_msg
+            
+            raise HTTPException(status_code=409, detail=detail)
+        # Otherwise it's a 404
+        raise HTTPException(status_code=404, detail=error_msg)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get report for contract {contract_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/{contract_id}/report/pdf")
+async def get_contract_report_pdf(
+    contract_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+) -> StreamingResponse:
+    """
+    Download contract report as PDF.
+    
+    Args:
+        contract_id: Contract ID (INTEGER)
+        db: Database session
+    
+    Returns:
+        PDF file with Content-Disposition attachment header
+    """
+    try:
+        # Verify ownership or sample access
+        from sqlalchemy import select
+        from ...db.models import Contract
+        result = await db.execute(select(Contract).where(Contract.id == contract_id))
+        contract_check = result.scalar_one_or_none()
+        
+        # Allow if: owned by user OR is a sample contract
+        if not contract_check or not (contract_check.user_id == current_user.id or contract_check.is_sample):
+            raise HTTPException(status_code=404, detail="Contract not found")
+        
+        # Assemble report
+        report = await assemble_contract_report(contract_id, db)
+        
+        # Generate PDF
+        pdf_bytes = generate_pdf_report(report)
+        
+        # Create sanitized filename
+        safe_filename = _sanitize_filename(report.filename)
+        filename = f"{safe_filename}_report.pdf"
+        
+        # Return streaming response
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    
+    except RuntimeError as e:
+        # weasyprint not available (GTK libraries missing on Windows)
+        logger.error(f"PDF generation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="PDF generation unavailable. GTK libraries required on Windows."
+        )
+    
+    except HTTPException:
+        raise
+    
+    except Exception as e:
+        logger.error(f"Failed to generate PDF for contract {contract_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def _sanitize_filename(filename: str) -> str:
+    """
+    Sanitize contract filename for use in PDF filename.
+    
+    Removes file extension and special characters.
+    """
+    # Remove file extension
+    name = filename.rsplit('.', 1)[0]
+    
+    # Replace spaces and special characters with underscores
+    name = re.sub(r'[^\w\-]', '_', name)
+    
+    # Remove consecutive underscores
+    name = re.sub(r'_+', '_', name)
+    
+    # Trim underscores from start/end
+    name = name.strip('_')
+    
+    # Limit length
+    if len(name) > 50:
+        name = name[:50]
+    
+    return name or "contract"
